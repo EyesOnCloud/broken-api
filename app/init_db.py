@@ -1,23 +1,35 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'employees.db')
+DB_PATH = "employees.db"
+
+# Remove old DB if exists
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
 
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS users (
+# =========================
+# USERS TABLE
+# =========================
+
+cursor.execute("""
+CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT,
     password TEXT,
     role TEXT,
     employee_id INTEGER
 )
-''')
+""")
 
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS employees (
+# =========================
+# EMPLOYEES TABLE
+# =========================
+
+cursor.execute("""
+CREATE TABLE employees (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     department TEXT,
@@ -25,33 +37,38 @@ CREATE TABLE IF NOT EXISTS employees (
     email TEXT,
     position TEXT
 )
-''')
+""")
 
-cursor.execute("DELETE FROM users")
-cursor.execute("DELETE FROM employees")
+# =========================
+# INSERT EMPLOYEES
+# =========================
 
 employees = [
-    ('alice', 'Management', 150000, 'alice@company.local', 'CTO'),
-    ('bob', 'IT', 65000, 'bob@company.local', 'System Engineer'),
-    ('charlie', 'HR', 70000, 'charlie@company.local', 'HR Manager'),
-    ('david', 'Finance', 95000, 'david@company.local', 'Finance Lead')
+    ("Alice Johnson", "Management", 150000, "alice@company.local", "CTO"),
+    ("Bob Smith", "IT", 70000, "bob@company.local", "System Administrator"),
+    ("Charlie Brown", "HR", 65000, "charlie@company.local", "HR Specialist"),
+    ("David Wilson", "Finance", 90000, "david@company.local", "Finance Manager")
 ]
 
-cursor.executemany('''
+cursor.executemany("""
 INSERT INTO employees (name, department, salary, email, position)
 VALUES (?, ?, ?, ?, ?)
-''', employees)
+""", employees)
+
+# =========================
+# INSERT USERS
+# =========================
 
 users = [
-    ('alice', 'password123', 'admin', 1),
-    ('bob', 'bobpass', 'user', 2),
-    ('charlie', 'charliepass', 'user', 3)
+    ("alice", "password123", "admin", 1),
+    ("bob", "bobpass", "user", 2),
+    ("charlie", "charliepass", "user", 3)
 ]
 
-cursor.executemany('''
+cursor.executemany("""
 INSERT INTO users (username, password, role, employee_id)
 VALUES (?, ?, ?, ?)
-''', users)
+""", users)
 
 conn.commit()
 conn.close()
