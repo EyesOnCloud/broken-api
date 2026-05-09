@@ -1,85 +1,160 @@
 from flask import Flask, request, jsonify
-    conn = get_db_connection()
+import sqlite3
+import os
+import jwt
+import datetime
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'supersecretkey123'
+
+DB_PATH = '/app/data/employees.db'
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ── HEALTH CHECK ──────────────────────────────────────────────
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "running", "message": "Employee Records API is up"})
+
+
+# ── LOGIN ─────────────────────────────────────────────────────
+# VULNERABILITY 1: SQL Injection — username and password are
+# concatenated directly into the SQL query string.
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username', '')
+    password = data.get('password', '')
+
+    conn = get_db()
     cursor = conn.cursor()
 
-    # BOLA VULNERABILITY
-    query = f"SELECT * FROM employees WHERE id = {employee_id}"
+    # VULNERABLE: direct string concatenation — never do this
+    query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'"
+    print(f"[DEBUG] Executing query: {query}")   # debug leak — shows raw SQL in logs
 
-    print(f"Executing query: {query}")
+    try:
+        cursor.execute(query)
+        user = cursor.fetchone()
+    except Exception as e:
+        return jsonify({"error": str(e), "query": query}), 500   # leaks full query on error
+    finally:
+        conn.close()
 
-    cursor.execute(query)
+    if user:
+        token = jwt.encode({
+            'user_id': user['id'],
+            'username': user['username'],
+            'role': user['role'],
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=2)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+        return jsonify({"token": token, "role": user['role'], "message": "Login successful"})
+    else:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+
+# ── EMPLOYEE DETAIL ───────────────────────────────────────────
+# VULNERABILITY 2: Broken Object Level Authorization (BOLA) —
+# any authenticated user can fetch any employee record by ID.
+# There is no check that the requesting user owns that record.
+@app.route('/employee/<int:emp_id>', methods=['GET'])
+def get_employee(emp_id):
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Token required"}), 401
+
+    token = auth_header.split(' ')[1]
+    try:
+        jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return jsonify({"error": "Token expired"}), 401
+    except Exception:
+        return jsonify({"error": "Invalid token"}), 401
+
+    # VULNERABLE: no check — any valid token can request any ID
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM employees WHERE id = ?", (emp_id,))
     employee = cursor.fetchone()
-
     conn.close()
 
     if employee:
         return jsonify(dict(employee))
+    else:
+        return jsonify({"error": "Employee not found"}), 404
 
-    return jsonify({'error': 'Employee not found'}), 404
 
-
+# ── EMPLOYEE SEARCH ───────────────────────────────────────────
+# VULNERABILITY 3: SQL Injection on the search parameter —
+# the name query param is concatenated directly into a LIKE clause.
 @app.route('/employees/search', methods=['GET'])
 def search_employees():
-
-    auth_header = request.headers.get('Authorization')
-
-    if not auth_header:
-        return jsonify({'error': 'Missing token'}), 401
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Token required"}), 401
 
     token = auth_header.split(' ')[1]
-    user = verify_token(token)
-
-    if not user:
-        return jsonify({'error': 'Invalid token'}), 401
+    try:
+        jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+    except Exception:
+        return jsonify({"error": "Invalid token"}), 401
 
     name = request.args.get('name', '')
 
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
 
-    # VULNERABLE SQL QUERY
-    query = "SELECT * FROM employees WHERE name LIKE '%" + name + "%'
+    # VULNERABLE: direct string concatenation into LIKE clause
+    query = "SELECT * FROM employees WHERE name LIKE '%" + name + "%'"
+    print(f"[DEBUG] Executing query: {query}")
 
-    print(f"Executing query: {query}")
+    try:
+        cursor.execute(query)
+        results = cursor.fetchall()
+    except Exception as e:
+        return jsonify({"error": str(e), "query": query}), 500
+    finally:
+        conn.close()
 
-    cursor.execute(query)
-    results = cursor.fetchall()
-
-    conn.close()
-
-    return jsonify([dict(row) for row in results])
+    return jsonify([dict(r) for r in results])
 
 
+# ── ADMIN REPORT ──────────────────────────────────────────────
+# VULNERABILITY 4: Missing Authentication — the TODO was never
+# implemented. Any request (even with no token) reaches the logic.
 @app.route('/admin/report', methods=['POST'])
 def admin_report():
+    # TODO: verify admin role   <-- intentionally left unimplemented
+    data = request.get_json() or {}
+    report_type = data.get('report_type', 'summary')
 
-    # TODO: add auth check
-
-    data = request.get_json()
-    report_type = data.get('report_type')
-
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
 
     if report_type == 'all_employees':
         cursor.execute("SELECT * FROM employees")
-        results = cursor.fetchall()
-
     elif report_type == 'payroll':
-        cursor.execute("SELECT name, salary FROM employees")
-        results = cursor.fetchall()
-
+        cursor.execute("SELECT name, department, salary FROM employees")
     elif report_type == 'credentials':
-        cursor.execute("SELECT username, password FROM users")
-        results = cursor.fetchall()
-
+        cursor.execute("SELECT username, password, role FROM users")
     else:
-        return jsonify({'error': 'Unknown report type'}), 400
+        cursor.execute("SELECT COUNT(*) as total FROM employees")
 
+    results = cursor.fetchall()
     conn.close()
 
-    return jsonify([dict(row) for row in results])
+    return jsonify({
+
+        "report_type": report_type,
+        "generated_at": datetime.datetime.utcnow().isoformat(),
+        "data": [dict(r) for r in results]
+    })
 
 
+# ── START ─────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)   # MISCONFIGURATION: debug=True
