@@ -5,8 +5,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app/ /app/app/
+COPY app/ ./app/
+
+RUN mkdir -p /app/data
 
 EXPOSE 5000
 
-CMD ["python", "/app/app/app.py"]
+# Run init_db first, then start Flask
+CMD ["sh", "-c", "python /app/app/init_db.py && python /app/app/app.py"]
