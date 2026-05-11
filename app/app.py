@@ -88,43 +88,8 @@ def get_employee(emp_id):
         return jsonify({"error": "Employee not found"}), 404
 
 
-# ── EMPLOYEE SEARCH ───────────────────────────────────────────
-# VULNERABILITY 3: SQL Injection on the search parameter —
-# the name query param is concatenated directly into a LIKE clause.
-@app.route('/employees/search', methods=['GET'])
-def search_employees():
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        return jsonify({"error": "Token required"}), 401
-
-    token = auth_header.split(' ')[1]
-    try:
-        jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-    except Exception:
-        return jsonify({"error": "Invalid token"}), 401
-
-    name = request.args.get('name', '')
-
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # VULNERABLE: direct string concatenation into LIKE clause
-    query = "SELECT * FROM employees WHERE name LIKE '%" + name + "%'"
-    print(f"[DEBUG] Executing query: {query}")
-
-    try:
-        cursor.execute(query)
-        results = cursor.fetchall()
-    except Exception as e:
-        return jsonify({"error": str(e), "query": query}), 500
-    finally:
-        conn.close()
-
-    return jsonify([dict(r) for r in results])
-
-
 # ── ADMIN REPORT ──────────────────────────────────────────────
-# VULNERABILITY 4: Missing Authentication — the TODO was never
+# VULNERABILITY 3: Missing Authentication — the TODO was never
 # implemented. Any request (even with no token) reaches the logic.
 @app.route('/admin/report', methods=['POST'])
 def admin_report():
