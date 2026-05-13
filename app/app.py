@@ -119,7 +119,33 @@ def admin_report():
         "data": [dict(r) for r in results]
     })
 
+@app.route('/employees/search', methods=['GET'])
+def search_employees():
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Token required"}), 401
 
+    token = auth_header.split(' ')[1]
+
+    try:
+        jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+    except Exception:
+        return jsonify({"error": "Invalid token"}), 401
+
+    name = request.args.get('name', '')
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM employees WHERE name LIKE ?",
+        ('%' + name + '%',)
+    )
+
+    results = cursor.fetchall()
+    conn.close()
+
+    return jsonify([dict(r) for r in results])
 # ── START ─────────────────────────────────────────────────────
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)   # MISCONFIGURATION: debug=True
